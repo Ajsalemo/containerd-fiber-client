@@ -25,15 +25,35 @@ func main() {
 		log.Println("ERROR: Image pull failed..")
 		log.Fatal(err)
 	}
+
+	err3 := listImages(client, ctx)
+	if err3 != nil {
+		log.Println("ERROR: Listing images failed..")
+		log.Fatal(err)
+	}
 }
 
 func pullImage(client *containerd.Client, ctx context.Context) error {
-	image, err := client.Pull(ctx, "docker.io/library/redis:alpine", containerd.WithPullUnpack)
+	image, err := client.Pull(ctx, "docker.io/library/redis:latest", containerd.WithPullUnpack)
 	if err != nil {
 		return err
 	}
 
 	log.Printf("Successfully pulled %s image\n", image.Name())
+
+	return nil
+}
+
+func listImages(client *containerd.Client, ctx context.Context) error {
+	images, err := client.ListImages(ctx)
+
+	if err != nil {
+		return err
+	}
+	log.Println("Listing currently downloaded images..")
+	for _, image := range images {
+		log.Println(" - " + image.Name())
+	}
 
 	return nil
 }
