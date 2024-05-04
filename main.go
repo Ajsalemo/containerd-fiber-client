@@ -1,22 +1,22 @@
 package main
 
 import (
-	"log"
-
 	controllers "containerd-custom-client/controllers"
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
-// Todo - replace loggers with something like `zapp`
-// Todo - add route group
 func main() {
 	app := fiber.New()
+	api := app.Group("/api/images")
 
 	app.Get("/", controllers.Index)
-	app.Get("/image/pull", controllers.PullImageController)
-	app.Get("/image/list", controllers.ListImagesController)
+	api.Get("/pull", controllers.PullImageController)
+	api.Get("/list", controllers.ListImagesController)
 
-    log.Fatal(app.Listen(":3000"))
+	err := app.Listen(":3000")
+
+	if err != nil {
+		zap.L().Fatal(err.Error())
+	}
 }
-
-

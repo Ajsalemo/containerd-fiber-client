@@ -4,7 +4,7 @@ import (
 	ctr "containerd-custom-client/ctr"
 
 	"github.com/gofiber/fiber/v2"
-	"log"
+	"go.uber.org/zap"
 )
 
 func ListImagesController(cxt *fiber.Ctx) error {
@@ -15,9 +15,8 @@ func ListImagesController(cxt *fiber.Ctx) error {
 
 	client, ctxStdlib, err := ctr.ContainerdClient()
 	if err != nil {
-		log.Println("An error occurred when using the containerd client..")
-		log.Println(err)
-		return err
+		zap.L().Error("An error occurred when using the containerd client..")
+		zap.L().Fatal(err.Error())
 	}
 
 	// Close the client later on
@@ -25,12 +24,12 @@ func ListImagesController(cxt *fiber.Ctx) error {
 
 	images, err := client.ListImages(ctxStdlib)
 	if err != nil {
-		log.Println(err)
+		zap.L().Error(err.Error())
 		return cxt.Status(500).JSON(fiber.Map{"err": err})
 	}
 
 	for _, image := range images {
-		log.Println(" - " + image.Name())
+		zap.L().Info(image.Name())
 		imageArray = append(imageArray, Image{
 			Name: image.Name(),
 		})
