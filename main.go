@@ -11,7 +11,7 @@ func main() {
 	api := app.Group("/api/images")
 
 	app.Get("/", controllers.Index)
-	api.Get("/pull", controllers.PullImageController)
+	api.Post("/pull", controllers.PullImageController)
 	api.Get("/list", controllers.ListImagesController)
 
 	err := app.Listen(":3000")
