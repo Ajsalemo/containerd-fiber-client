@@ -6,6 +6,10 @@ import (
 	"go.uber.org/zap"
 )
 
+func init() {
+	zap.ReplaceGlobals(zap.Must(zap.NewProduction()))
+}
+
 func main() {
 	app := fiber.New()
 	api := app.Group("/api/images")
