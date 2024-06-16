@@ -72,8 +72,6 @@ func PullImageController(cxt *fiber.Ctx) error {
 	if !*imageDefinition.IsPublic {
 		resolver := docker.NewResolver(docker.ResolverOptions{
 			Credentials: func(host string) (string, string, error) {
-				zap.L().Info(imageDefinition.RegistryUsername)
-				zap.L().Info(imageDefinition.RegistryPassword)
 				return imageDefinition.RegistryUsername, imageDefinition.RegistryPassword, nil
 			},
 		})
