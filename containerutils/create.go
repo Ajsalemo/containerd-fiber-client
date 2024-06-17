@@ -16,7 +16,8 @@ func CreateContainer(image containerd.Image, containerName string) error {
 
 	// Close the client later on
 	defer client.Close()
-
+	// Create a new container with the image
+	// Note, this is not an actual running container. We need to create a 'task' to run the container
 	container, err := client.NewContainer(
 		ctxStdlib,
 		containerName,
