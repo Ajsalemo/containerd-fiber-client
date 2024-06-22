@@ -25,7 +25,7 @@ type ImageDefintion struct {
 	PulledImage string `json:"pulledImage"`
 }
 
-func PullImageController(cxt *fiber.Ctx) error {
+func CreateApplicationController(cxt *fiber.Ctx) error {
 	var imageDefinition ImageDefintion
 	body := cxt.Body()
 
@@ -107,7 +107,7 @@ func PullImageController(cxt *fiber.Ctx) error {
 		imageDefinition.PulledImage = image.Name()
 
 		// Create the container after a successful pull
-		// CreateContainer also calls RunTask to start the container
+		// CreateContainer also calls RunTask to start the application process
 		containerErr := containerutils.CreateContainer(image, imageDefinition.ContainerName)
 		if containerErr != nil {
 			zap.L().Error(containerErr.Error())
