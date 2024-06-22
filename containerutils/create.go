@@ -29,9 +29,17 @@ func CreateContainer(image containerd.Image, containerName string) error {
 		zap.L().Error("An error occurred when trying to create a new container for image: " + image.Name())
 		return err
 	}
-	defer container.Delete(ctxStdlib, containerd.WithSnapshotCleanup)
-
 	zap.L().Info("Successfully created container with ID " + containerName + " and snapshot with ID " + containerName + "-snapshot")
+	zap.L().Info("Attempting to create a new task for container: " + containerName)
+	// Start a task (process)
+	taskErr := RunTask(container, containerName)
+
+	if taskErr != nil {
+		zap.L().Error("An error occurred when trying to create a new task for container: " + containerName)
+		return err
+	}
+
+	defer container.Delete(ctxStdlib, containerd.WithSnapshotCleanup)
 
 	return err
 }

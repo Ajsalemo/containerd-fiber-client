@@ -106,13 +106,12 @@ func PullImageController(cxt *fiber.Ctx) error {
 		zap.L().Info("Successfully pulled image " + image.Name())
 		imageDefinition.PulledImage = image.Name()
 
-		imageDefinition.PulledImage = image.Name()
 		// Create the container after a successful pull
-		err2 := containerutils.CreateContainer(image, imageDefinition.ContainerName)
-
-		if err2 != nil {
-			zap.L().Error(err2.Error())
-			return cxt.Status(500).JSON(fiber.Map{"err": err2.Error()})
+		// CreateContainer also calls RunTask to start the container
+		containerErr := containerutils.CreateContainer(image, imageDefinition.ContainerName)
+		if containerErr != nil {
+			zap.L().Error(containerErr.Error())
+			return cxt.Status(500).JSON(fiber.Map{"err": containerErr.Error()})
 		}
 	}
 
