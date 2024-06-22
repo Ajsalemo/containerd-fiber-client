@@ -12,11 +12,11 @@ func init() {
 
 func main() {
 	app := fiber.New()
-	api := app.Group("/api/images")
+	api := app.Group("/api/v1")
 
 	app.Get("/", controllers.Index)
-	api.Post("/pull", controllers.PullImageController)
-	api.Get("/list", controllers.ListImagesController)
+	api.Post("/application/create", controllers.CreateApplicationController)
+	api.Get("/images/list", controllers.ListImagesController)
 
 	err := app.Listen(":3000")
 
