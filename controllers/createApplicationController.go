@@ -45,6 +45,7 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 	client, ctxStdlib, err := ctr.ContainerdClient()
 	if err != nil {
 		zap.L().Error("An error occurred when using the containerd client..")
+		zap.L().Error(err.Error())
 		return err
 	}
 
@@ -82,6 +83,7 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 
 		image, err := client.Pull(ctxStdlib, imageDefinition.Registry+"/"+imageDefinition.Image+":"+imageDefinition.Tag, containerd.WithPullUnpack, containerd.WithResolver(resolver))
 		if err != nil {
+			zap.L().Error("An error occured when trying to pull an authenticated image: " + imageDefinition.Registry + "/" + imageDefinition.Image + ":" + imageDefinition.Tag)
 			zap.L().Error(err.Error())
 			return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
 		}
@@ -92,6 +94,7 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 		err2 := containerutils.CreateContainer(image, imageDefinition.ContainerName)
 
 		if err2 != nil {
+			zap.L().Error("An error occurred when trying to create a container for authenticated image: " + image.Name())
 			zap.L().Error(err2.Error())
 			return cxt.Status(500).JSON(fiber.Map{"err": err2.Error()})
 		}
@@ -99,6 +102,7 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 		// Else, pull without the resolver since it's public
 		image, err := client.Pull(ctxStdlib, imageDefinition.Registry+"/"+imageDefinition.Image+":"+imageDefinition.Tag, containerd.WithPullUnpack)
 		if err != nil {
+			zap.L().Error("An error occured when trying to pull a public image: " + imageDefinition.Registry + "/" + imageDefinition.Image + ":" + imageDefinition.Tag)
 			zap.L().Error(err.Error())
 			return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
 		}
@@ -110,6 +114,7 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 		// CreateContainer also calls RunTask to start the application process
 		containerErr := containerutils.CreateContainer(image, imageDefinition.ContainerName)
 		if containerErr != nil {
+			zap.L().Error("An error occurred when trying to create a container for public image: " + image.Name())
 			zap.L().Error(containerErr.Error())
 			return cxt.Status(500).JSON(fiber.Map{"err": containerErr.Error()})
 		}

@@ -22,6 +22,7 @@ func RunTask(container containerd.Container, containerName string) error {
 	task, err := container.NewTask(ctxStdlib, cio.NewCreator(cio.WithStdio))
 	if err != nil {
 		zap.L().Error("An error occurred when trying to create a task from container: " + containerName)
+		zap.L().Error(err.Error())
 		return err
 	}
 	defer task.Delete(ctxStdlib)
@@ -33,24 +34,29 @@ func RunTask(container containerd.Container, containerName string) error {
 		exitStatusC, err := task.Wait(ctxStdlib)
 		if err != nil {
 			zap.L().Error("An error occurred when trying to use `task.Wait` on task: " + task.ID())
+			zap.L().Error(err.Error())
 			return err
 		}
 
 		if err := task.Start(ctxStdlib); err != nil {
 			zap.L().Error("An error occurred when trying to start a task with: " + task.ID())
+			zap.L().Error(err.Error())
+			return err
 		}
+
+		// Task succesfully created
+		zap.L().Info("Successfully created task with ID " + task.ID())
+
 		status := <-exitStatusC
 		code, _, err := status.Result()
 		if err != nil {
+			zap.L().Error(err.Error())
 			return err
 		}
 		zap.L().Info("Task " + task.ID() + " exited with status code: " + string(code))
 
 		return err
 	}()
-
-	// Task succesfully created
-	zap.L().Info("Successfully created task with ID " + task.ID())
 
 	return err
 }

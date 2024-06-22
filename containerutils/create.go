@@ -11,6 +11,7 @@ func CreateContainer(image containerd.Image, containerName string) error {
 	client, ctxStdlib, err := ctr.ContainerdClient()
 	if err != nil {
 		zap.L().Error("An error occurred when using the containerd client..")
+		zap.L().Error(err.Error())
 		return err
 	}
 
@@ -27,6 +28,7 @@ func CreateContainer(image containerd.Image, containerName string) error {
 
 	if err != nil {
 		zap.L().Error("An error occurred when trying to create a new container for image: " + image.Name())
+		zap.L().Error(err.Error())
 		return err
 	}
 	zap.L().Info("Successfully created container with ID " + containerName + " and snapshot with ID " + containerName + "-snapshot")
@@ -36,6 +38,7 @@ func CreateContainer(image containerd.Image, containerName string) error {
 
 	if taskErr != nil {
 		zap.L().Error("An error occurred when trying to create a new task for container: " + containerName)
+		zap.L().Error(taskErr.Error())
 		return err
 	}
 
