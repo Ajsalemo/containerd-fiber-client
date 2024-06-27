@@ -20,85 +20,128 @@ type ImageDefintion struct {
 	RegistryUsername string `json:"registryUsername"`
 	RegistryPassword string `json:"registryPassword"`
 	ContainerName    string `json:"containerName"`
-	// This field will be populated with the name of the image that was pulled - this is NOT on the incoming request body from the client
-	// All the other fields above are
-	PulledImage string `json:"pulledImage"`
+}
+
+type CtrImageProps struct {
+	CtrImageDef     containerd.Image
+	CtrContainerDef containerd.Container `json:"ctrContainerDef"`
+	PulledImage     string               `json:"pulledImage"`
 }
 
 type Image struct {
 	Name string
 }
 
-var imageDefinition ImageDefintion
+var ctrImageProps CtrImageProps
 
 func ContainerdClient() (*containerd.Client, context.Context, error) {
 	client, err := containerd.New("/run/containerd/containerd.sock")
 	ctx := namespaces.WithNamespace(context.Background(), "default")
-
-	if err != nil {
-		zap.L().Error("An error occurred when using the containerd client..")
-		return client, ctx, err
-	}
-
-	// Close the client
-	defer client.Close()
 
 	return client, ctx, err
 }
 
 // Function to pull authenticated images
 // The primary difference here is the use of `Resolver` to handle authentication
-func PullAuthenticatedImage(resolver remotes.Resolver) (containerd.Image, error) {
-	client, ctx, _ := ContainerdClient()
+func PullAuthenticatedImage(imageDefinition ImageDefintion, resolver remotes.Resolver) error {
+	client, ctx, err := ContainerdClient()
+
+	if err != nil {
+		zap.L().Error("An error occurred when trying to use the containerd client..")
+		zap.L().Error(err.Error())
+		return err
+	}
+
+	// Close the client later on
+	defer client.Close()
+
 	image, err := client.Pull(ctx, imageDefinition.Registry+"/"+imageDefinition.Image+":"+imageDefinition.Tag, containerd.WithPullUnpack, containerd.WithResolver(resolver))
 
 	if err != nil {
-		zap.L().Error("An error occurred when trying to pull an image..")
-		return image, err
+		zap.L().Error("An error occurred when trying to pull an authenticated image..")
+		zap.L().Error(err.Error())
+		return err
 	}
-	return image, err
+	// We set our struct properties to these containerd `image` (containerd.Image) values to be used around in other functions
+	ctrImageProps.CtrImageDef = image
+	ctrImageProps.PulledImage = image.Name()
+
+	zap.L().Info("Succesfully pulled image " + image.Name())
+
+	return err
 }
 
 // Function to pull public images
 // No authentication
-func PullPublicImage() (containerd.Image, error) {
-	client, ctx, _ := ContainerdClient()
+func PullPublicImage(imageDefinition ImageDefintion) error {
+	client, ctx, err := ContainerdClient()
+	if err != nil {
+		zap.L().Error("An error occurred when trying to use the containerd client..")
+		zap.L().Error(err.Error())
+		return err
+	}
+	// Close the client later on
+	defer client.Close()
 	image, err := client.Pull(ctx, imageDefinition.Registry+"/"+imageDefinition.Image+":"+imageDefinition.Tag, containerd.WithPullUnpack)
 
 	if err != nil {
-		zap.L().Error("An error occurred when trying to pull an image..")
-		return image, err
+		zap.L().Error("An error occurred when trying to pull a public image..")
+		return err
 	}
-	return image, err
+	// We set our struct properties to these containerd `image` (containerd.Image) values to be used around in other functions
+	ctrImageProps.CtrImageDef = image
+	ctrImageProps.PulledImage = image.Name()
+
+	zap.L().Info("Succesfully pulled image " + image.Name())
+
+	return err
 }
 
-func CreateContainer(image containerd.Image) (containerd.Container, error) {
-	client, ctx, _ := ContainerdClient()
+func CreateContainer(imageDefinition ImageDefintion) error {
+	client, ctx, err := ContainerdClient()
+
+	if err != nil {
+		zap.L().Error("An error occurred when trying to use the containerd client..")
+		zap.L().Error(err.Error())
+		return err
+	}
+
+	// Close the client later on
+	defer client.Close()
 	// Create a new container with the image
 	// Note, this is not an actual running container. We need to create a 'task' to run the container
 	container, err := client.NewContainer(
 		ctx,
 		imageDefinition.ContainerName,
-		containerd.WithNewSnapshot(imageDefinition.ContainerName+"-snapshot", image),
-		containerd.WithNewSpec(oci.WithImageConfig(image)),
+		containerd.WithNewSnapshot(imageDefinition.ContainerName+"-snapshot", ctrImageProps.CtrImageDef),
+		containerd.WithNewSpec(oci.WithImageConfig(ctrImageProps.CtrImageDef)),
 	)
 
 	if err != nil {
-		zap.L().Error("An error occurred when trying to create a new container for image: " + image.Name())
-		return container, err
+		zap.L().Error("An error occurred when trying to create a new container for image: " + imageDefinition.Image)
+		return err
 	}
+	// We set our struct properties to these containerd `container` (containerd.Container) values to be used around in other functions
+	ctrImageProps.CtrContainerDef = container
 	zap.L().Info("Successfully created container with ID " + imageDefinition.ContainerName + " and snapshot with ID " + imageDefinition.ContainerName + "-snapshot")
 	zap.L().Info("Attempting to create a new task for container: " + imageDefinition.ContainerName)
 
 	defer container.Delete(ctx, containerd.WithSnapshotCleanup)
 	// Create and run a task after creating a container
-	RunTask(container, imageDefinition.ContainerName)
+	RunTask(container, imageDefinition)
 
-	return container, err
+	return err
 }
 
-func RunTask(container containerd.Container, containerName string) error {
-	_, ctx, _ := ContainerdClient()
+func RunTask(container containerd.Container, imageDefinition ImageDefintion) error {
+	client, ctx, err := ContainerdClient()
+	if err != nil {
+		zap.L().Error("An error occurred when trying to use the containerd client..")
+		zap.L().Error(err.Error())
+		return err
+	}
+	// Close the client later on
+	defer client.Close()
 	// Create a new task with the container passed in as a parameter
 	// Note, this is not an actual running container. We need to create a 'task' to run the container
 	task, err := container.NewTask(ctx, cio.NewCreator(cio.WithStdio))
@@ -139,6 +182,7 @@ func RunTask(container containerd.Container, containerName string) error {
 	return err
 }
 
+// Function to list currently pulled images
 func ListImages() ([]Image, error) {
 	var imageArray []Image
 	client, ctx, _ := ContainerdClient()

@@ -12,6 +12,8 @@ import (
 
 func CreateApplicationController(cxt *fiber.Ctx) error {
 	var imageDefinition ctr.ImageDefintion
+	var ctrImageProps ctr.CtrImageProps
+
 	body := cxt.Body()
 
 	if body == nil {
@@ -26,7 +28,6 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 		zap.L().Error(err.Error())
 		return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
 	}
-
 	// Do some validation checks on inputs
 	if imageDefinition.Registry == "" {
 		return cxt.Status(400).JSON(fiber.Map{"err": "Registry name is empty or was not provided in the request body"})
@@ -56,7 +57,7 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 			},
 		})
 
-		image, err := ctr.PullAuthenticatedImage(resolver)
+		err := ctr.PullAuthenticatedImage(imageDefinition, resolver)
 
 		if err != nil {
 			zap.L().Error("An error occured when trying to pull an authenticated image: " + imageDefinition.Registry + "/" + imageDefinition.Image + ":" + imageDefinition.Tag)
@@ -64,41 +65,37 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 			return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
 		}
 
-		zap.L().Info("Successfully pulled image " + image.Name())
-		imageDefinition.PulledImage = image.Name()
+		zap.L().Info("Successfully pulled image " + ctrImageProps.PulledImage)
 		// Create the container after a successful pull
 		// CreateContainer calls RunTask which is what actually starts the application procoess
-		container, err := ctr.CreateContainer(image)
+		cerr := ctr.CreateContainer(imageDefinition)
 
-		if err != nil {
-			zap.L().Error("An error occurred when trying to create a container for authenticated image: " + container.ID() + " and image " + imageDefinition.PulledImage)
-			zap.L().Error(err.Error())
-			return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
+		if cerr != nil {
+			zap.L().Error("An error occurred when trying to create a container for authenticated image: " + ctrImageProps.CtrContainerDef.ID() + " and image " + ctrImageProps.PulledImage)
+			zap.L().Error(cerr.Error())
+			return cxt.Status(500).JSON(fiber.Map{"err": cerr.Error()})
 		}
 	} else {
 		// Else, pull without the resolver since it's public
-		image, err := ctr.PullPublicImage()
+		err := ctr.PullPublicImage(imageDefinition)
 		if err != nil {
 			zap.L().Error("An error occured when trying to pull a public image: " + imageDefinition.Registry + "/" + imageDefinition.Image + ":" + imageDefinition.Tag)
 			zap.L().Error(err.Error())
 			return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
 		}
 
-		zap.L().Info("Successfully pulled image " + image.Name())
-		imageDefinition.PulledImage = image.Name()
+		zap.L().Info("Successfully pulled image " + ctrImageProps.PulledImage)
 
 		// Create the container after a successful pull
 		// CreateContainer calls RunTask which is what actually starts the application procoess
-		container, err := ctr.CreateContainer(image)
+		cerr := ctr.CreateContainer(imageDefinition)
 
-		if err != nil {
-			zap.L().Error("An error occurred when trying to create a container for authenticated image: " + container.ID() + " and image " + imageDefinition.PulledImage)
-			zap.L().Error(err.Error())
-			return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
+		if cerr != nil {
+			zap.L().Error("An error occurred when trying to create a container for authenticated image: " + ctrImageProps.CtrContainerDef.ID() + " and image " + ctrImageProps.PulledImage)
+			zap.L().Error(cerr.Error())
+			return cxt.Status(500).JSON(fiber.Map{"err": cerr.Error()})
 		}
 	}
 
-	return cxt.JSON(fiber.Map{"msg": "Successfully pulled image " + imageDefinition.PulledImage})
+	return cxt.JSON(fiber.Map{"msg": "Successfully pulled image " + ctrImageProps.PulledImage})
 }
-
-
