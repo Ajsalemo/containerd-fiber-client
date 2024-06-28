@@ -52,9 +52,6 @@ func PullAuthenticatedImage(imageDefinition ImageDefintion, resolver remotes.Res
 		return err
 	}
 
-	// Close the client later on
-	defer client.Close()
-
 	image, err := client.Pull(ctx, imageDefinition.Registry+"/"+imageDefinition.Image+":"+imageDefinition.Tag, containerd.WithPullUnpack, containerd.WithResolver(resolver))
 
 	if err != nil {
@@ -79,9 +76,8 @@ func PullPublicImage(imageDefinition ImageDefintion) error {
 		zap.L().Error("An error occurred when trying to use the containerd client..")
 		zap.L().Error(err.Error())
 		return err
-	}
-	// Close the client later on
-	defer client.Close()
+	}	
+	
 	image, err := client.Pull(ctx, imageDefinition.Registry+"/"+imageDefinition.Image+":"+imageDefinition.Tag, containerd.WithPullUnpack)
 
 	if err != nil {
@@ -105,9 +101,6 @@ func CreateContainer(imageDefinition ImageDefintion) error {
 		zap.L().Error(err.Error())
 		return err
 	}
-
-	// Close the client later on
-	defer client.Close()
 	// Create a new container with the image
 	// Note, this is not an actual running container. We need to create a 'task' to run the container
 	container, err := client.NewContainer(
@@ -119,10 +112,12 @@ func CreateContainer(imageDefinition ImageDefintion) error {
 
 	if err != nil {
 		zap.L().Error("An error occurred when trying to create a new container for image: " + imageDefinition.Image)
+		zap.L().Error(err.Error())
 		return err
 	}
 	// We set our struct properties to these containerd `container` (containerd.Container) values to be used around in other functions
 	ctrImageProps.CtrContainerDef = container
+
 	zap.L().Info("Successfully created container with ID " + imageDefinition.ContainerName + " and snapshot with ID " + imageDefinition.ContainerName + "-snapshot")
 	zap.L().Info("Attempting to create a new task for container: " + imageDefinition.ContainerName)
 
@@ -134,15 +129,13 @@ func CreateContainer(imageDefinition ImageDefintion) error {
 }
 
 func RunTask(container containerd.Container, imageDefinition ImageDefintion) error {
-	client, ctx, err := ContainerdClient()
+	_, ctx, err := ContainerdClient()
+
 	if err != nil {
 		zap.L().Error("An error occurred when trying to use the containerd client..")
 		zap.L().Error(err.Error())
 		return err
-	}
-	// Close the client later on
-	defer client.Close()
-	// Create a new task with the container passed in as a parameter
+	}	// Create a new task with the container passed in as a parameter
 	// Note, this is not an actual running container. We need to create a 'task' to run the container
 	task, err := container.NewTask(ctx, cio.NewCreator(cio.WithStdio))
 	if err != nil {
