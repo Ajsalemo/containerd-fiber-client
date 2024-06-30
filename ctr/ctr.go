@@ -190,12 +190,6 @@ func StopTask() error {
 		return err
 	}
 
-	if err != nil {
-		zap.L().Error("An error occurred when trying to use the containerd client..")
-		zap.L().Error(err.Error())
-		return err
-	}
-
 	zap.L().Info("Attempting to kill task with ID " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID() + " with SIGKTERM")
 	// Kill the task
 	if err := ctrImageProps.CtrTaskDef.Kill(ctx, syscall.SIGTERM); err != nil {
@@ -211,12 +205,14 @@ func StopTask() error {
 		return err
 	}
 	// Check if the task is still running - if so, wait 30 seconds and kill it with SIGKILL
-	// Poll every 5 seconds to check if the task is still running
+	// Todo - write to stdout every couple of seconds instead of every few milliseconds to avoid too much i/o
 	go func() error {
-		if taskStatus.Status == "running" {
-			zap.L().Info("Checking if Task " + ctrImageProps.CtrTaskDef.ID() + " is still running or respected SIGTERM..")
+		// If the task is not stopped, wait 30 seconds and kill it with SIGKILL
+		// In this 30 second window, if it returns 'stopped', then break out of the loop
+		if taskStatus.Status != "stopped" {
+			zap.L().Info("Checking if Task " + ctrImageProps.CtrTaskDef.ID() + " is still running or respected SIGTERM and exited..")
 			zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " is still running..")
-			for range time.Tick(5 * time.Second) {
+			for start := time.Now(); time.Since(start) < 30*time.Second; {
 				taskStatus, err := ctrImageProps.CtrTaskDef.Status(ctx)
 				if err != nil {
 					zap.L().Error("An error occurred when trying to get the status of task: " + ctrImageProps.CtrTaskDef.ID())
@@ -226,18 +222,75 @@ func StopTask() error {
 
 				zap.L().Info("Task status for " + ctrImageProps.CtrTaskDef.ID() + ": " + string(taskStatus.Status))
 				// If the task is no longer running, break out of the loop
-				if taskStatus.Status != "running" {
+				if taskStatus.Status == "stopped" {
 					zap.L().Info("Task status for " + ctrImageProps.CtrTaskDef.ID() + ": " + string(taskStatus.Status))
 					break
 				}
-			}
+				// After 30 seconds has elapsed, send a SIGKILL if the task is still in a running s tate
+				if start.Add(30 * time.Second).Before(time.Now()) {
+					zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " did not shutdown in 30 seconds, sending  SIGKILL..")
 
-			// Kill the task
-			if err := ctrImageProps.CtrTaskDef.Kill(ctx, syscall.SIGKILL); err != nil {
-				zap.L().Error("An error occurred when trying to kill task: " + ctrImageProps.CtrTaskDef.ID() + " with SIGKILL")
-				zap.L().Error(err.Error())
-				return err
+					// Kill the task
+					if err := ctrImageProps.CtrTaskDef.Kill(ctx, syscall.SIGKILL, containerd.WithKillAll); err != nil {
+						zap.L().Error("An error occurred when trying to kill task: " + ctrImageProps.CtrTaskDef.ID() + " with SIGKILL")
+						zap.L().Error(err.Error())
+						return err
+					}
+					// Check the status of the task after sending SIGKILL
+					// It won't immediately return in a 'stopped' state - so we enter a loop to check the status
+					for {
+						innertaskStatus, err := ctrImageProps.CtrTaskDef.Status(ctx)
+						if err != nil {
+							zap.L().Error("An error occurred when trying to get the status of task: " + ctrImageProps.CtrTaskDef.ID())
+							zap.L().Error(err.Error())
+							return err
+						}
+						zap.L().Info("[SIGKILL] Task status for " + ctrImageProps.CtrTaskDef.ID() + ": " + string(taskStatus.Status))
+						// If the task is stopped, delete the task and the associated container
+						if innertaskStatus.Status == "stopped" {
+							zap.L().Info("Deleting task: " + ctrImageProps.CtrTaskDef.ID() + " after sending SIGKILL")
+							// Delete the task after killing it
+							exitStatusK, err := ctrImageProps.CtrTaskDef.Delete(ctx)
+
+							if err != nil {
+								zap.L().Error("An error occurred when trying to delete task: " + ctrImageProps.CtrTaskDef.ID())
+								zap.L().Error(err.Error())
+								return err
+							}
+							zap.L().Info("[SUCCESS] Deleted task: " + ctrImageProps.CtrTaskDef.ID())
+
+							// Check the exit status of the task
+							code, _, err := exitStatusK.Result()
+							if err != nil {
+								zap.L().Error("An error occurred when trying to read the exit status of task: " + ctrImageProps.CtrTaskDef.ID())
+								zap.L().Error(err.Error())
+								return err
+							}
+							zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " exited with status code: " + string(rune(code)))
+
+							zap.L().Info("Deleting container and snapshot for task: " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID())
+							// Delete the container and snapshot after stopping the task
+							cerr := ctrImageProps.CtrContainerDef.Delete(ctx, containerd.WithSnapshotCleanup)
+
+							if cerr != nil {
+								zap.L().Error("An error occurred when trying to delete container: " + ctrImageProps.CtrContainerDef.ID())
+								zap.L().Error(cerr.Error())
+								return err
+							}
+
+							zap.L().Info("[SUCCESS] Deleted container and snapshot for task: " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID())
+							break
+						}
+					}
+
+					break
+				}
 			}
+		}
+
+		if taskStatus.Status == "stopped" {
+			zap.L().Info("Task for " + ctrImageProps.CtrContainerDef.ID() + " is already stopped..")
+			zap.L().Info("Deleting task: " + ctrImageProps.CtrTaskDef.ID())
 			// Delete the task after killing it
 			exitStatusK, err := ctrImageProps.CtrTaskDef.Delete(ctx)
 
@@ -246,6 +299,8 @@ func StopTask() error {
 				zap.L().Error(err.Error())
 				return err
 			}
+			zap.L().Info("[SUCCESS] Deleted task: " + ctrImageProps.CtrTaskDef.ID())
+
 			// Check the exit status of the task
 			code, _, err := exitStatusK.Result()
 			if err != nil {
@@ -264,12 +319,14 @@ func StopTask() error {
 				zap.L().Error(cerr.Error())
 				return err
 			}
+
+			zap.L().Info("[SUCCESS] Deleted container and snapshot for task: " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID())
+
+			return err
 		}
 
 		return err
 	}()
-
-	zap.L().Info("Succesfully stopped task with ID " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID())
 
 	return err
 }
