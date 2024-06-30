@@ -2,6 +2,8 @@ package ctr
 
 import (
 	"context"
+	"syscall"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -24,6 +26,7 @@ type ImageDefintion struct {
 
 type CtrImageProps struct {
 	CtrImageDef     containerd.Image
+	CtrTaskDef      containerd.Task
 	CtrContainerDef containerd.Container `json:"ctrContainerDef"`
 	PulledImage     string               `json:"pulledImage"`
 }
@@ -76,8 +79,8 @@ func PullPublicImage(imageDefinition ImageDefintion) error {
 		zap.L().Error("An error occurred when trying to use the containerd client..")
 		zap.L().Error(err.Error())
 		return err
-	}	
-	
+	}
+
 	image, err := client.Pull(ctx, imageDefinition.Registry+"/"+imageDefinition.Image+":"+imageDefinition.Tag, containerd.WithPullUnpack)
 
 	if err != nil {
@@ -101,6 +104,8 @@ func CreateContainer(imageDefinition ImageDefintion) error {
 		zap.L().Error(err.Error())
 		return err
 	}
+
+	zap.L().Info("Attempting to create a new container for: " + imageDefinition.ContainerName)
 	// Create a new container with the image
 	// Note, this is not an actual running container. We need to create a 'task' to run the container
 	container, err := client.NewContainer(
@@ -119,9 +124,7 @@ func CreateContainer(imageDefinition ImageDefintion) error {
 	ctrImageProps.CtrContainerDef = container
 
 	zap.L().Info("Successfully created container with ID " + imageDefinition.ContainerName + " and snapshot with ID " + imageDefinition.ContainerName + "-snapshot")
-	zap.L().Info("Attempting to create a new task for container: " + imageDefinition.ContainerName)
 
-	defer container.Delete(ctx, containerd.WithSnapshotCleanup)
 	// Create and run a task after creating a container
 	RunTask(container, imageDefinition)
 
@@ -135,42 +138,138 @@ func RunTask(container containerd.Container, imageDefinition ImageDefintion) err
 		zap.L().Error("An error occurred when trying to use the containerd client..")
 		zap.L().Error(err.Error())
 		return err
-	}	// Create a new task with the container passed in as a parameter
+	}
+	// Create a new task with the container passed in as a parameter
 	// Note, this is not an actual running container. We need to create a 'task' to run the container
 	task, err := container.NewTask(ctx, cio.NewCreator(cio.WithStdio))
+	ctrImageProps.CtrTaskDef = task
+
 	if err != nil {
 		zap.L().Error("An error occurred when trying to create a task from container: " + imageDefinition.ContainerName)
 		return err
 	}
-	defer task.Delete(ctx)
 	// Run this as a goroutine to avoid blocking
 	// This runs it in the background - but we can still see the container/task stdout/stderr in our Go process
 	go func() error {
 		// See https://github.com/containerd/containerd/blob/main/docs/getting-started.md
 		// We use `Wait` to avoid issues with processes that exit/complete very quick
-		exitStatusC, err := task.Wait(ctx)
+		exitStatusC, err := ctrImageProps.CtrTaskDef.Wait(ctx)
 		if err != nil {
-			zap.L().Error("An error occurred when trying to use `task.Wait` on task: " + task.ID())
+			zap.L().Error("An error occurred when trying to use `ctrImageProps.CtrTaskDef.Wait` on task: " + ctrImageProps.CtrTaskDef.ID())
 			return err
 		}
 
-		if err := task.Start(ctx); err != nil {
-			zap.L().Error("An error occurred when trying to start a task with: " + task.ID())
+		if err := ctrImageProps.CtrTaskDef.Start(ctx); err != nil {
+			zap.L().Error("An error occurred when trying to start a task with: " + ctrImageProps.CtrTaskDef.ID())
 			return err
 		}
 
 		// Task succesfully created
-		zap.L().Info("Successfully created task with ID " + task.ID())
+		zap.L().Info("Successfully created task with ID " + ctrImageProps.CtrTaskDef.ID())
 
 		status := <-exitStatusC
 		code, _, err := status.Result()
 		if err != nil {
 			return err
 		}
-		zap.L().Info("Task " + task.ID() + " exited with status code: " + string(code))
+		zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " exited with status code: " + string(code))
 
 		return err
 	}()
+
+	return err
+}
+
+// StopTask deletes the task
+func StopTask() error {
+	_, ctx, err := ContainerdClient()
+
+	if err != nil {
+		zap.L().Error("An error occurred when trying to use the containerd client..")
+		zap.L().Error(err.Error())
+		return err
+	}
+
+	if err != nil {
+		zap.L().Error("An error occurred when trying to use the containerd client..")
+		zap.L().Error(err.Error())
+		return err
+	}
+
+	zap.L().Info("Attempting to kill task with ID " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID() + " with SIGKTERM")
+	// Kill the task
+	if err := ctrImageProps.CtrTaskDef.Kill(ctx, syscall.SIGTERM); err != nil {
+		zap.L().Error("An error occurred when trying to kill task: " + ctrImageProps.CtrTaskDef.ID() + " with SIGTERM")
+		zap.L().Error(err.Error())
+		return err
+	}
+
+	taskStatus, err := ctrImageProps.CtrTaskDef.Status(ctx)
+	if err != nil {
+		zap.L().Error("An error occurred when trying to get the status of task: " + ctrImageProps.CtrTaskDef.ID())
+		zap.L().Error(err.Error())
+		return err
+	}
+	// Check if the task is still running - if so, wait 30 seconds and kill it with SIGKILL
+	// Poll every 5 seconds to check if the task is still running
+	go func() error {
+		if taskStatus.Status == "running" {
+			zap.L().Info("Checking if Task " + ctrImageProps.CtrTaskDef.ID() + " is still running or respected SIGTERM..")
+			zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " is still running..")
+			for range time.Tick(5 * time.Second) {
+				taskStatus, err := ctrImageProps.CtrTaskDef.Status(ctx)
+				if err != nil {
+					zap.L().Error("An error occurred when trying to get the status of task: " + ctrImageProps.CtrTaskDef.ID())
+					zap.L().Error(err.Error())
+					return err
+				}
+
+				zap.L().Info("Task status for " + ctrImageProps.CtrTaskDef.ID() + ": " + string(taskStatus.Status))
+				// If the task is no longer running, break out of the loop
+				if taskStatus.Status != "running" {
+					zap.L().Info("Task status for " + ctrImageProps.CtrTaskDef.ID() + ": " + string(taskStatus.Status))
+					break
+				}
+			}
+
+			// Kill the task
+			if err := ctrImageProps.CtrTaskDef.Kill(ctx, syscall.SIGKILL); err != nil {
+				zap.L().Error("An error occurred when trying to kill task: " + ctrImageProps.CtrTaskDef.ID() + " with SIGKILL")
+				zap.L().Error(err.Error())
+				return err
+			}
+			// Delete the task after killing it
+			exitStatusK, err := ctrImageProps.CtrTaskDef.Delete(ctx)
+
+			if err != nil {
+				zap.L().Error("An error occurred when trying to delete task: " + ctrImageProps.CtrTaskDef.ID())
+				zap.L().Error(err.Error())
+				return err
+			}
+			// Check the exit status of the task
+			code, _, err := exitStatusK.Result()
+			if err != nil {
+				zap.L().Error("An error occurred when trying to read the exit status of task: " + ctrImageProps.CtrTaskDef.ID())
+				zap.L().Error(err.Error())
+				return err
+			}
+			zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " exited with status code: " + string(code))
+
+			zap.L().Info("Deleting container and snapshot for task: " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID())
+			// Delete the container and snapshot after stopping the task
+			cerr := ctrImageProps.CtrContainerDef.Delete(ctx, containerd.WithSnapshotCleanup)
+
+			if cerr != nil {
+				zap.L().Error("An error occurred when trying to delete container: " + ctrImageProps.CtrContainerDef.ID())
+				zap.L().Error(cerr.Error())
+				return err
+			}
+		}
+
+		return err
+	}()
+
+	zap.L().Info("Succesfully stopped task with ID " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID())
 
 	return err
 }

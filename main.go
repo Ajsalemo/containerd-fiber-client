@@ -16,6 +16,7 @@ func main() {
 
 	app.Get("/", controllers.Index)
 	api.Post("/application/create", controllers.CreateApplicationController)
+	api.Get("/application/stop", controllers.StopApplicationController)
 	api.Get("/images/list", controllers.ListImagesController)
 
 	err := app.Listen(":3000")

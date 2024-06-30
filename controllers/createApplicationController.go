@@ -65,7 +65,7 @@ func CreateApplicationController(cxt *fiber.Ctx) error {
 			return cxt.Status(500).JSON(fiber.Map{"err": err.Error()})
 		}
 
-		zap.L().Info("Successfully pulled image " + ctrImageProps.PulledImage)
+		zap.L().Info("Successfully pulled image " + imageDefinition.Registry + "/" + imageDefinition.Image + ":" + imageDefinition.Tag)
 		// Create the container after a successful pull
 		// CreateContainer calls RunTask which is what actually starts the application procoess
 		cerr := ctr.CreateContainer(imageDefinition)
