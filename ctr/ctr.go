@@ -2,10 +2,10 @@ package ctr
 
 import (
 	"context"
+	"errors"
+	"go.uber.org/zap"
 	"syscall"
 	"time"
-
-	"go.uber.org/zap"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/remotes"
@@ -189,12 +189,11 @@ func StopTask() error {
 		zap.L().Error(err.Error())
 		return err
 	}
+	// Do an upfront check to see if the task exists
+	if ctrImageProps.CtrTaskDef == nil {
+		err := errors.New("the task doesn't exist or it's already stopped")
 
-	zap.L().Info("Attempting to kill task with ID " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID() + " with SIGKTERM")
-	// Kill the task
-	if err := ctrImageProps.CtrTaskDef.Kill(ctx, syscall.SIGTERM); err != nil {
-		zap.L().Error("An error occurred when trying to kill task: " + ctrImageProps.CtrTaskDef.ID() + " with SIGTERM")
-		zap.L().Error(err.Error())
+		zap.L().Error("The task doesn't exist or it's already stopped.")
 		return err
 	}
 
@@ -204,6 +203,15 @@ func StopTask() error {
 		zap.L().Error(err.Error())
 		return err
 	}
+
+	zap.L().Info("Attempting to kill task with ID " + ctrImageProps.CtrTaskDef.ID() + " for container: " + ctrImageProps.CtrContainerDef.ID() + " with SIGKTERM")
+	// Kill the task
+	if err := ctrImageProps.CtrTaskDef.Kill(ctx, syscall.SIGTERM); err != nil {
+		zap.L().Error("An error occurred when trying to kill task: " + ctrImageProps.CtrTaskDef.ID() + " with SIGTERM")
+		zap.L().Error(err.Error())
+		return err
+	}
+
 	// Check if the task is still running - if so, wait 30 seconds and kill it with SIGKILL
 	// Todo - write to stdout every couple of seconds instead of every few milliseconds to avoid too much i/o
 	go func() error {
@@ -211,7 +219,7 @@ func StopTask() error {
 		// In this 30 second window, if it returns 'stopped', then break out of the loop
 		if taskStatus.Status != "stopped" {
 			zap.L().Info("Checking if Task " + ctrImageProps.CtrTaskDef.ID() + " is still running or respected SIGTERM and exited..")
-			zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " is still running..")
+			zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " is still running. Waiting 30 seconds before sending SIGKILL..")
 			for start := time.Now(); time.Since(start) < 30*time.Second; {
 				taskStatus, err := ctrImageProps.CtrTaskDef.Status(ctx)
 				if err != nil {
@@ -220,13 +228,12 @@ func StopTask() error {
 					return err
 				}
 
-				zap.L().Info("Task status for " + ctrImageProps.CtrTaskDef.ID() + ": " + string(taskStatus.Status))
 				// If the task is no longer running, break out of the loop
 				if taskStatus.Status == "stopped" {
 					zap.L().Info("Task status for " + ctrImageProps.CtrTaskDef.ID() + ": " + string(taskStatus.Status))
 					break
 				}
-				// After 30 seconds has elapsed, send a SIGKILL if the task is still in a running s tate
+				// After 30 seconds has elapsed, send a SIGKILL if the task is still in a running state
 				if start.Add(30 * time.Second).Before(time.Now()) {
 					zap.L().Info("Task " + ctrImageProps.CtrTaskDef.ID() + " did not shutdown in 30 seconds, sending  SIGKILL..")
 
